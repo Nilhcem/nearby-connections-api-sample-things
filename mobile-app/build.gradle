@@ -1,0 +1,28 @@
+apply plugin: 'com.android.application'
+
+android {
+    compileSdkVersion rootProject.ext.sdkVersion
+    buildToolsVersion rootProject.ext.buildToolsVersion
+
+    defaultConfig {
+        applicationId 'com.example.nearby.companion'
+        minSdkVersion 15
+        targetSdkVersion rootProject.ext.sdkVersion
+        versionCode 1
+        versionName '1.0'
+
+        resValue 'string', 'nearby_service_id', rootProject.ext.nearbyServiceId
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+dependencies {
+    compile 'com.android.support:appcompat-v7:25.3.1'
+    compile 'com.google.android.gms:play-services-nearby:10.2.1'
+}

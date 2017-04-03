@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Nearby companion app</string>
+    <string name="send_message_btn">Send message to Things device</string>
+</resources>

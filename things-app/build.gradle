@@ -1,0 +1,31 @@
+apply plugin: 'com.android.application'
+
+android {
+    compileSdkVersion rootProject.ext.sdkVersion
+    buildToolsVersion rootProject.ext.buildToolsVersion
+
+    defaultConfig {
+        applicationId 'com.example.nearby.things'
+        minSdkVersion 24
+        targetSdkVersion rootProject.ext.sdkVersion
+        versionCode 1
+        versionName '1.0'
+
+        resValue 'string', 'nearby_service_id', rootProject.ext.nearbyServiceId
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+dependencies {
+    provided 'com.google.android.things:androidthings:0.2-devpreview'
+
+    // Android Things Dev-Preview 2 has no mechanism to update GMS yet.
+    // We use the Play Services version 10.0.x (bundled in developer preview 2)
+    compile 'com.google.android.gms:play-services-nearby:10.0.1'
+}
