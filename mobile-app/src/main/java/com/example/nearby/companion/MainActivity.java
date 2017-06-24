@@ -1,8 +1,5 @@
 package com.example.nearby.companion;
 
-import android.content.Context;
-import android.net.ConnectivityManager;
-import android.net.NetworkInfo;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
@@ -17,17 +14,27 @@ import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.common.api.ResultCallback;
 import com.google.android.gms.common.api.Status;
 import com.google.android.gms.nearby.Nearby;
-import com.google.android.gms.nearby.connection.Connections;
+import com.google.android.gms.nearby.connection.ConnectionInfo;
+import com.google.android.gms.nearby.connection.ConnectionLifecycleCallback;
+import com.google.android.gms.nearby.connection.ConnectionResolution;
+import com.google.android.gms.nearby.connection.ConnectionsStatusCodes;
+import com.google.android.gms.nearby.connection.DiscoveredEndpointInfo;
+import com.google.android.gms.nearby.connection.DiscoveryOptions;
+import com.google.android.gms.nearby.connection.EndpointDiscoveryCallback;
+import com.google.android.gms.nearby.connection.Payload;
+import com.google.android.gms.nearby.connection.PayloadCallback;
+import com.google.android.gms.nearby.connection.PayloadTransferUpdate;
+import com.google.android.gms.nearby.connection.Strategy;
 
 import java.nio.charset.Charset;
+
+import static com.example.nearby.companion.BuildConfig.NEARBY_SERVICE_ID;
 
 public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "Nearby";
-    private static final long TIMEOUT_DISCOVER_MS = 5_000;
 
     private GoogleApiClient mGoogleApiClient;
-    private String mServiceId;
     private String mRemoteHostEndpoint;
     private boolean mIsConnected;
     private TextView mLogs;
@@ -76,7 +83,7 @@ public class MainActivity extends AppCompatActivity {
 
         if (mGoogleApiClient.isConnected()) {
             if (!mIsConnected || TextUtils.isEmpty(mRemoteHostEndpoint)) {
-                Nearby.Connections.stopDiscovery(mGoogleApiClient, mServiceId);
+                Nearby.Connections.stopDiscovery(mGoogleApiClient);
                 return;
             }
             sendMessage("Client disconnecting");
@@ -90,55 +97,79 @@ public class MainActivity extends AppCompatActivity {
 
     private void startDiscovery() {
         log("startDiscovery");
-        if (!isConnectedToWiFi()) {
-            log("Device is not connected to Wi-Fi");
-            return;
-        }
 
-        // Discover nearby apps that are advertising with the required service ID.
-        Nearby.Connections
-                .startDiscovery(mGoogleApiClient, mServiceId, TIMEOUT_DISCOVER_MS, new Connections.EndpointDiscoveryListener() {
+        Nearby.Connections.startDiscovery(mGoogleApiClient, NEARBY_SERVICE_ID, new EndpointDiscoveryCallback() {
                     @Override
-                    public void onEndpointFound(String endpointId, String serviceId, String endpointName) {
-                        log("onEndpointFound:" + endpointId + ":" + endpointName);
+                    public void onEndpointFound(String endpointId, DiscoveredEndpointInfo info) {
+                        log("onEndpointFound:" + endpointId + ":" + info.getEndpointName());
 
-                        log("Send connection request");
-                        String name = null; // Human readable name. If null or empty, name will be generated based on the device name or model.
-                        byte[] payload = null;
-                        Nearby.Connections.sendConnectionRequest(mGoogleApiClient, name, endpointId, payload, new Connections.ConnectionResponseCallback() {
-                            @Override
-                            public void onConnectionResponse(String endpointId, Status status, byte[] bytes) {
-                                Log.i(TAG, "onConnectionResponse:" + endpointId + ":" + status);
-                                if (status.isSuccess()) {
-                                    Log.i(TAG, "Connected successfully");
-                                    Nearby.Connections.stopDiscovery(mGoogleApiClient, mServiceId);
-                                    mRemoteHostEndpoint = endpointId;
-                                    mIsConnected = true;
-                                } else {
-                                    Log.w(TAG, "Connection to " + endpointId + " failed");
-                                    mIsConnected = false;
-                                }
-                            }
-                        }, new Connections.MessageListener() {
-                            @Override
-                            public void onMessageReceived(String endpointId, byte[] payload, boolean isReliable) {
-                                Log.d(TAG, "onMessageReceived: " + new String(payload));
-                            }
+                        Nearby.Connections
+                                .requestConnection(mGoogleApiClient, null, endpointId, new ConnectionLifecycleCallback() {
+                                    @Override
+                                    public void onConnectionInitiated(String endpointId, ConnectionInfo connectionInfo) {
+                                        log("onConnectionInitiated. Token: " + connectionInfo.getAuthenticationToken());
+                                        // Automatically accept the connection on both sides"
+                                        Nearby.Connections.acceptConnection(mGoogleApiClient, endpointId, new PayloadCallback() {
+                                            @Override
+                                            public void onPayloadReceived(String endpointId, Payload payload) {
+                                                if (payload.getType() == Payload.Type.BYTES) {
+                                                    log("onPayloadReceived: " + new String(payload.asBytes()));
+                                                }
+                                            }
 
-                            @Override
-                            public void onDisconnected(String endpointId) {
-                                log("onDisconnected: " + endpointId);
-                            }
-                        });
+                                            @Override
+                                            public void onPayloadTransferUpdate(String endpointId, PayloadTransferUpdate update) {
+                                                // Provides updates about the progress of both incoming and outgoing payloads
+                                            }
+                                        });
+                                    }
+
+                                    @Override
+                                    public void onConnectionResult(String endpointId, ConnectionResolution resolution) {
+                                        log("onConnectionResult:" + endpointId + ":" + resolution.getStatus());
+                                        if (resolution.getStatus().isSuccess()) {
+                                            log("Connected successfully");
+                                            Nearby.Connections.stopDiscovery(mGoogleApiClient);
+                                            mRemoteHostEndpoint = endpointId;
+                                            mIsConnected = true;
+                                        } else {
+                                            if (resolution.getStatus().getStatusCode() == ConnectionsStatusCodes.STATUS_CONNECTION_REJECTED) {
+                                                log("The connection was rejected by one or both sides");
+                                            } else {
+                                                log("Connection to " + endpointId + " failed. Code: " + resolution.getStatus().getStatusCode());
+                                            }
+                                            mIsConnected = false;
+                                        }
+                                    }
+
+                                    @Override
+                                    public void onDisconnected(String endpointId) {
+                                        // We've been disconnected from this endpoint. No more data can be sent or received.
+                                        log("onDisconnected: " + endpointId);
+                                    }
+                                })
+                                .setResultCallback(new ResultCallback<Status>() {
+                                    @Override
+                                    public void onResult(@NonNull Status status) {
+                                        if (status.isSuccess()) {
+                                            // We successfully requested a connection. Now both sides
+                                            // must accept before the connection is established.
+                                        } else {
+                                            // Nearby Connections failed to request the connection.
+                                        }
+                                    }
+                                });
                     }
 
                     @Override
                     public void onEndpointLost(String endpointId) {
-                        log("onEndpointLost:" + endpointId);
                         // An endpoint that was previously available for connection is no longer.
                         // It may have stopped advertising, gone out of range, or lost connectivity.
+                        log("onEndpointLost:" + endpointId);
                     }
-                })
+                },
+                new DiscoveryOptions(Strategy.P2P_STAR)
+        )
                 .setResultCallback(new ResultCallback<Status>() {
                     @Override
                     public void onResult(@NonNull Status status) {
@@ -152,19 +183,12 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void sendMessage(String message) {
-        Log.d(TAG, "About to send message: " + message);
-        Nearby.Connections.sendReliableMessage(mGoogleApiClient, mRemoteHostEndpoint, message.getBytes(Charset.forName("UTF-8")));
-    }
-
-    private boolean isConnectedToWiFi() {
-        ConnectivityManager connectivityManager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-        NetworkInfo activeNetworkInfo = connectivityManager.getActiveNetworkInfo();
-        return activeNetworkInfo != null && activeNetworkInfo.getType() == ConnectivityManager.TYPE_WIFI;
+        log("About to send message: " + message);
+        Nearby.Connections.sendPayload(mGoogleApiClient, mRemoteHostEndpoint, Payload.fromBytes(message.getBytes(Charset.forName("UTF-8"))));
     }
 
     private void initLayout() {
         setContentView(R.layout.activity_main);
-        mServiceId = getString(R.string.nearby_service_id);
         mLogs = (TextView) findViewById(R.id.nearby_logs);
 
         findViewById(R.id.nearby_button).setOnClickListener(new View.OnClickListener() {

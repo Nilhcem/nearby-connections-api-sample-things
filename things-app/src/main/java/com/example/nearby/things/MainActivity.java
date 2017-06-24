@@ -1,10 +1,6 @@
 package com.example.nearby.things;
 
 import android.app.Activity;
-import android.content.Context;
-import android.net.ConnectivityManager;
-import android.net.Network;
-import android.net.NetworkInfo;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
@@ -13,13 +9,22 @@ import android.util.Log;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.common.api.ResultCallback;
-import com.google.android.gms.common.api.Status;
 import com.google.android.gms.nearby.Nearby;
+import com.google.android.gms.nearby.connection.AdvertisingOptions;
+import com.google.android.gms.nearby.connection.ConnectionInfo;
+import com.google.android.gms.nearby.connection.ConnectionLifecycleCallback;
+import com.google.android.gms.nearby.connection.ConnectionResolution;
 import com.google.android.gms.nearby.connection.Connections;
+import com.google.android.gms.nearby.connection.Payload;
+import com.google.android.gms.nearby.connection.PayloadCallback;
+import com.google.android.gms.nearby.connection.PayloadTransferUpdate;
+import com.google.android.gms.nearby.connection.Strategy;
 
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.List;
+
+import static com.example.nearby.things.BuildConfig.NEARBY_SERVICE_ID;
 
 public class MainActivity extends Activity {
 
@@ -71,7 +76,7 @@ public class MainActivity extends Activity {
             Nearby.Connections.stopAdvertising(mGoogleApiClient);
 
             if (!mRemotePeerEndpoints.isEmpty()) {
-                Nearby.Connections.sendReliableMessage(mGoogleApiClient, mRemotePeerEndpoints, "Shutting down host".getBytes(Charset.forName("UTF-8")));
+                Nearby.Connections.sendPayload(mGoogleApiClient, mRemotePeerEndpoints, Payload.fromBytes("Shutting down host".getBytes(Charset.forName("UTF-8"))));
                 Nearby.Connections.stopAllEndpoints(mGoogleApiClient);
                 mRemotePeerEndpoints.clear();
             }
@@ -81,44 +86,49 @@ public class MainActivity extends Activity {
     }
 
     private void startAdvertising() {
-        if (!isConnectedToNetwork()) {
-            Log.e(TAG, "Device is not connected to network");
-            return;
-        }
-
         Nearby.Connections
-                .startAdvertising(mGoogleApiClient, null, null, 0L, new Connections.ConnectionRequestListener() {
-                    @Override
-                    public void onConnectionRequest(final String endpointId, String deviceId, String endpointName, byte[] handshakeData) {
-                        Log.d(TAG, "onConnectionRequest:" + endpointId + ":" + endpointName);
-
-                        // Automatically accept the connection. Also possible to rejectConnectionRequest()
-                        Nearby.Connections
-                                .acceptConnectionRequest(mGoogleApiClient, endpointId, handshakeData, new Connections.MessageListener() {
+                .startAdvertising(mGoogleApiClient, null, NEARBY_SERVICE_ID, new ConnectionLifecycleCallback() {
+                            @Override
+                            public void onConnectionInitiated(String endpointId, ConnectionInfo connectionInfo) {
+                                Log.d(TAG, "onConnectionInitiated. Token: " + connectionInfo.getAuthenticationToken());
+                                // Automatically accept the connection on both sides"
+                                Nearby.Connections.acceptConnection(mGoogleApiClient, endpointId, new PayloadCallback() {
                                     @Override
-                                    public void onMessageReceived(String endpointId, byte[] payload, boolean isReliable) {
-                                        Log.d(TAG, "onMessageReceived: " + new String(payload));
-                                        Nearby.Connections.sendReliableMessage(mGoogleApiClient, endpointId, "ACK".getBytes(Charset.forName("UTF-8")));
-                                    }
-
-                                    @Override
-                                    public void onDisconnected(String endpointId) {
-                                        Log.i(TAG, "onDisconnected: " + endpointId);
-                                    }
-                                })
-                                .setResultCallback(new ResultCallback<Status>() {
-                                    @Override
-                                    public void onResult(@NonNull Status status) {
-                                        if (status.isSuccess()) {
-                                            if (!mRemotePeerEndpoints.contains(endpointId)) {
-                                                mRemotePeerEndpoints.add(endpointId);
-                                            }
-                                            Log.d(TAG, "Connected!");
+                                    public void onPayloadReceived(String endpointId, Payload payload) {
+                                        if (payload.getType() == Payload.Type.BYTES) {
+                                            Log.d(TAG, "onPayloadReceived: " + new String(payload.asBytes()));
+                                            Nearby.Connections.sendPayload(mGoogleApiClient, endpointId, Payload.fromBytes("ACK".getBytes(Charset.forName("UTF-8"))));
                                         }
                                     }
+
+                                    @Override
+                                    public void onPayloadTransferUpdate(String endpointId, PayloadTransferUpdate update) {
+                                        // Provides updates about the progress of both incoming and outgoing payloads
+                                    }
                                 });
-                    }
-                })
+                            }
+
+                            @Override
+                            public void onConnectionResult(String endpointId, ConnectionResolution resolution) {
+                                Log.d(TAG, "onConnectionResult");
+                                if (resolution.getStatus().isSuccess()) {
+                                    if (!mRemotePeerEndpoints.contains(endpointId)) {
+                                        mRemotePeerEndpoints.add(endpointId);
+                                    }
+                                    Log.d(TAG, "Connected! (endpointId=" + endpointId + ")");
+                                } else {
+                                    Log.w(TAG, "Connection to " + endpointId + " failed. Code: " + resolution.getStatus().getStatusCode());
+                                }
+                            }
+
+                            @Override
+                            public void onDisconnected(String endpointId) {
+                                // We've been disconnected from this endpoint. No more data can be sent or received.
+                                Log.i(TAG, "onDisconnected: " + endpointId);
+                            }
+                        },
+                        new AdvertisingOptions(Strategy.P2P_STAR)
+                )
                 .setResultCallback(new ResultCallback<Connections.StartAdvertisingResult>() {
                     @Override
                     public void onResult(Connections.StartAdvertisingResult result) {
@@ -128,22 +138,5 @@ public class MainActivity extends Activity {
                         }
                     }
                 });
-    }
-
-    private boolean isConnectedToNetwork() {
-        ConnectivityManager connManager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-        Network[] nets = connManager.getAllNetworks();
-        if (nets != null) {
-            for (Network net : nets) {
-                NetworkInfo info = connManager.getNetworkInfo(net);
-                if (info != null) {
-                    Log.d(TAG, "found network: " + info.getTypeName() + ", " + info.getState().name());
-                    if (info.isConnectedOrConnecting()) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
     }
 }

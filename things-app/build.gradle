@@ -11,7 +11,7 @@ android {
         versionCode 1
         versionName '1.0'
 
-        resValue 'string', 'nearby_service_id', rootProject.ext.nearbyServiceId
+        buildConfigField "String", "NEARBY_SERVICE_ID", "\"${rootProject.ext.nearbyServiceId}\""
     }
 
     buildTypes {
@@ -23,9 +23,9 @@ android {
 }
 
 dependencies {
-    provided 'com.google.android.things:androidthings:0.2-devpreview'
+    provided 'com.google.android.things:androidthings:0.4.1-devpreview'
 
-    // Android Things Dev-Preview 2 has no mechanism to update GMS yet.
-    // We use the Play Services version 10.0.x (bundled in developer preview 2)
-    compile 'com.google.android.gms:play-services-nearby:10.0.1'
+    // Android Things Developer Preview has no mechanism to update GMS yet.
+    // We use the Play Services version 11.0.0 (bundled in developer preview 4.1)
+    compile 'com.google.android.gms:play-services-nearby:11.0.0'
 }
